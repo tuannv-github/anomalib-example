@@ -2,6 +2,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import importlib
+
+import utils_gaussian
+importlib.reload(utils_gaussian)
+from utils_gaussian import *
+import utils_dataset
+importlib.reload(utils_dataset)
+from utils_dataset import *
+import utils_model
+importlib.reload(utils_model)
+from utils_model import *
 
 IQ_NORMALIZATION_FACTOR = 3.5
 
@@ -563,3 +574,29 @@ def gen_report_db(datasets, ae, device, file_path, num_samples=-1):
     print("Building PDF")
     pdf.build(elements)
     print("PDF built at: ", file_path)
+
+def get_anomaly_score(iq_img):
+    # Get dimensions
+    height, width = iq_img.shape[1], iq_img.shape[2]
+    window_height = 12
+    window_width = 1
+    # print(f"height: {height}, width: {width}, window_height: {window_height}, window_width: {window_width}")
+    
+    # Calculate number of windows that will fit
+    num_rows = (height - window_height) // window_height + 1
+    num_cols = (width - window_width) // window_width + 1
+    
+    # Calculate standard deviation for each window
+    std_image = torch.zeros((num_rows, num_cols))  # Dynamic size based on actual dimensions
+    
+    for h in range(0, height - window_height + 1, window_height):
+        row_idx = h // window_height
+        for w in range(0, width - window_width + 1, window_width):
+            col_idx = w // window_width
+            window = iq_img[:, h:h+window_height, w:w+window_width]
+            std_val = torch.std(window).item()
+            std_image[row_idx, col_idx] = std_val
+
+    anomaly_score = np.percentile(std_image.flatten(), 99)
+
+    return anomaly_score, std_image
