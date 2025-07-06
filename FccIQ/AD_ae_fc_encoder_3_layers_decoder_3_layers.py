@@ -15,13 +15,17 @@ class AE(nn.Module):
             nn.Flatten(),
             nn.Linear(self.input_dim, 4096),
             nn.Tanh(),
-            nn.Linear(4096, latent_dim),  # [batch_size, 1024]
+            nn.Linear(4096, 2048),
+            nn.Tanh(),
+            nn.Linear(2048, latent_dim),  # [batch_size, 1024]
             nn.Tanh()
         )
 
         # FC Decoder
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 4096),
+            nn.Linear(latent_dim, 2048),
+            nn.Tanh(),
+            nn.Linear(2048, 4096),
             nn.Tanh(),
             nn.Linear(4096, self.input_dim),  # [batch_size, 8400]
             # nn.Tanh()  # Output in [-1, 1]

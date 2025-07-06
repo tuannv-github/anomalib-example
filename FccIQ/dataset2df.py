@@ -68,6 +68,7 @@ def build_df():
 
     # Split good data into train and test (80-20 split)
     good_train_df, good_test_df = train_test_split(good_df, test_size=0.2, random_state=42)
+    # good_train_df, good_test_df = train_test_split(good_df, test_size=0.2)
 
     # Save train and test splits
     good_train_df.to_csv(os.path.join(DATASET_DIR, "good_train_df.csv"), index=False)

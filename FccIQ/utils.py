@@ -3,18 +3,19 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 
-IQ_NORMALIZATION_FACTOR = 15.0
+IQ_NORMALIZATION_FACTOR = 3.5
 
-# def AE_loss(recon, data, mu, logvar, beta=1.0):
-#     # Reconstruction loss (e.g., MSE)
-#     recon_loss = torch.nn.functional.mse_loss(recon, data, reduction='sum')
-#     # KL-divergence
-#     kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-#     return recon_loss + beta * kl_div
+def VAE_loss(recon, data, mu, logvar, beta=1.0):
+    # Reconstruction loss (e.g., MSE)
+    recon_loss = torch.nn.functional.mse_loss(recon, data, reduction='sum')
+    # print("recon_loss: ", recon_loss)
+    # KL-divergence
+    kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    return recon_loss + beta * kl_div
 
-# def AE_loss(recon, data, mu, logvar, beta=1.0):
+# def VAE_loss(recon, data, mu, logvar, beta=1.0):
 #     """
-#     Computes the loss for a Variational Autoencoder (VAE) with I and Q channel inputs.
+#     Computes the VAE loss with a cyclic phase loss for I and Q channel inputs.
     
 #     Args:
 #         recon (torch.Tensor): Reconstructed data, shape [batch_size, 2, subcarriers, symbols].
@@ -28,60 +29,28 @@ IQ_NORMALIZATION_FACTOR = 15.0
 #         torch.Tensor: Total VAE loss (reconstruction loss + beta * KL-divergence).
 #     """
 #     # Convert I and Q channels to complex tensors
-#     # recon and data have shape [5261, 2, 300, 14]; extract I ([:, 0]) and Q ([:, 1])
-#     recon_complex = torch.complex(recon[:, 0], recon[:, 1])  # Shape: [5261, 300, 14]
-#     data_complex = torch.complex(data[:, 0], data[:, 1])    # Shape: [5261, 300, 14]
+#     recon_complex = torch.complex(recon[:, 0], recon[:, 1])  # Shape: [batch_size, subcarriers, symbols]
+#     data_complex = torch.complex(data[:, 0], data[:, 1])    # Shape: [batch_size, subcarriers, symbols]
     
-#     # Reconstruction loss: Mean Squared Error on amplitude and phase
+#     # Reconstruction loss: MSE for amplitude, cyclic loss for phase
 #     amplitude_loss = torch.nn.functional.mse_loss(
 #         torch.abs(recon_complex), torch.abs(data_complex), reduction='sum'
-#     ) / 2
-#     phase_loss = torch.nn.functional.mse_loss(
-#         torch.angle(recon_complex), torch.angle(data_complex), reduction='sum'
-#     ) / 2
-#     recon_loss = amplitude_loss + phase_loss
+#     )
     
-#     # KL-divergence: Regularization term for latent distribution
+#     # Cyclic phase loss: 1 - cos(phase_diff)
+#     phase_diff = torch.angle(recon_complex) - torch.angle(data_complex)
+#     phase_loss = (1 - torch.cos(phase_diff)).sum()
+
+#     recon_loss = amplitude_loss
+    
+#     # mse_loss = torch.nn.functional.mse_loss(recon, data, reduction='sum')
+#     # print("mse_loss: ", mse_loss)
+
+#     # KL-divergence
 #     kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     
-#     # Total loss: Reconstruction + beta-weighted KL-divergence
+#     # Total loss
 #     return recon_loss + beta * kl_div
-
-def AE_loss(recon, data, mu, logvar, beta=1.0):
-    """
-    Computes the VAE loss with a cyclic phase loss for I and Q channel inputs.
-    
-    Args:
-        recon (torch.Tensor): Reconstructed data, shape [batch_size, 2, subcarriers, symbols].
-                             The 2 channels represent I (real) and Q (imaginary) components.
-        data (torch.Tensor): Original input data, same shape as recon.
-        mu (torch.Tensor): Mean of the latent distribution, shape [batch_size, latent_dim].
-        logvar (torch.Tensor): Log-variance of the latent distribution, shape [batch_size, latent_dim].
-        beta (float, optional): Weight for the KL-divergence term. Defaults to 1.0.
-    
-    Returns:
-        torch.Tensor: Total VAE loss (reconstruction loss + beta * KL-divergence).
-    """
-    # Convert I and Q channels to complex tensors
-    recon_complex = torch.complex(recon[:, 0], recon[:, 1])  # Shape: [batch_size, subcarriers, symbols]
-    data_complex = torch.complex(data[:, 0], data[:, 1])    # Shape: [batch_size, subcarriers, symbols]
-    
-    # Reconstruction loss: MSE for amplitude, cyclic loss for phase
-    amplitude_loss = torch.nn.functional.mse_loss(
-        torch.abs(recon_complex), torch.abs(data_complex), reduction='sum'
-    )
-    
-    # Cyclic phase loss: 1 - cos(phase_diff)
-    phase_diff = torch.angle(recon_complex) - torch.angle(data_complex)
-    phase_loss = (1 - torch.cos(phase_diff)).sum()
-
-    recon_loss = amplitude_loss + phase_loss
-    
-    # KL-divergence
-    kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    
-    # Total loss
-    return recon_loss + beta * kl_div
 
 # Generate synthetic WGN images (normal data)
 def generate_wgn_images(num_samples, height=28, width=28, channels=1):
@@ -101,7 +70,7 @@ def generate_anomalous_images(num_samples, height=28, width=28, channels=1):
     return torch.tensor(images, dtype=torch.float32)
 
 # Training function
-def train_AE(model, data_loader, epochs=20, learning_rate=1e-4, beta=1.0, device=None):
+def train_VAE(model, data_loader, epochs=20, learning_rate=1e-4, beta=1.0, device=None):
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     model.train()
     for epoch in range(epochs):
@@ -109,8 +78,29 @@ def train_AE(model, data_loader, epochs=20, learning_rate=1e-4, beta=1.0, device
         for batch_idx, data in enumerate(data_loader):
             data = data.to(device)
             optimizer.zero_grad()
-            recon_batch, (mu, logvar, offset) = model(data)
-            loss = AE_loss(recon_batch, data, mu, logvar, beta)
+            recon_batch, mu, logvar, z = model(data)
+            loss = VAE_loss(recon_batch, data, mu, logvar, beta)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            # print(f"Epoch {epoch+1}/{epochs}, Batch {batch_idx+1}/{len(data_loader)}, Loss: {loss.item():.6f}")
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss / len(data_loader.dataset):.6f}")
+
+def AE_loss(recon, data):
+    return nn.functional.mse_loss(recon, data, reduction='sum')
+
+def train_AE(model, data_loader, epochs=20, learning_rate=1e-4, device=None):
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    model.train()
+    for epoch in range(epochs):
+        total_loss = 0
+        for batch_idx, data in enumerate(data_loader):
+            data = data.to(device)
+            # print(data.shape)
+            optimizer.zero_grad()
+            recon_batch = model(data)
+            # print(recon_batch.shape)
+            loss = AE_loss(recon_batch, data)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -338,6 +328,8 @@ def gen_report(filename, anomaly_maps, anomaly_bins, verdicts, ground_truths):
     print("PDF built")
 
 def plot_iq_recon(plt, iq, recon, anomaly_map, mse, anomaly_score):
+    # loss = torch.nn.functional.mse_loss(recon, iq, reduction='sum')
+
     plt.figure(figsize=(30, 30))
     plt.subplot(3, 3, 1)
     to_be_plotted = np.sum(iq**2, axis=0)
@@ -382,24 +374,32 @@ def plot_iq_recon(plt, iq, recon, anomaly_map, mse, anomaly_score):
     plt.title(f'Anomaly Map, min: {np.min(to_be_plotted):.6f}, max: {np.max(to_be_plotted):.6f}')
 
     plt.subplot(3, 3, 8)
-    plt.hist(anomaly_map.flatten(), bins=50, alpha=0.7, color='red', edgecolor='black')
+    xlim = max(np.max(anomaly_map), 1)
+    plt.xlim(0, xlim)
+    plt.hist(anomaly_map.flatten(), bins=50, alpha=0.7, color='red', edgecolor='black', range=(0, xlim))
     # plt.xscale('log')
-    plt.yscale('log')
     plt.title(f'Anomaly Map Histogram\nMean: {np.mean(anomaly_map):.6f}, Std: {np.std(anomaly_map):.6f}')
     plt.xlabel('Anomaly Score')
     plt.ylabel('Frequency')
+    plt.yscale('log')
+    plt.ylim(1, 300*14*2)
+    # print(anomaly_map.shape)
+
     plt.text(0.5, 0.3, f'RMSE: {np.sqrt(mse):.6f}\nAnomaly Score: {anomaly_score:.6f}', 
             horizontalalignment='left', verticalalignment='top',
             transform=plt.gca().transAxes, fontsize=12, 
             bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8))
 
     plt.subplot(3, 3, 9)
-    plt.hist(np.sum(iq**2, axis=0).flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black')
+    xlim = max(np.max(np.sum(iq**2, axis=0)), 1)
+    plt.xlim(0, xlim)
+    plt.hist(np.sum(iq**2, axis=0).flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black', range=(0, xlim))
     # plt.xscale('log')
-    plt.yscale('log')
     plt.title(f'IQ Histogram\nMean: {np.mean(iq):.6f}, Std: {np.std(iq):.6f}')
     plt.xlabel('IQ Value')
     plt.ylabel('Frequency')
+    plt.yscale('log')
+    plt.ylim(1, 300*14*2)
     
     return plt
 
@@ -461,36 +461,30 @@ def train_autoencoder(
 import scipy.io
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 
-def test_AE(path, ae, device):
-    test_data = scipy.io.loadmat(path)
-    # Extract the IQ data
-    iq_data = test_data['noiseInterferenceGrid_IQ']  # Assuming the key is 'data', adjust if different
-    print(f"Test data shape: {iq_data.shape}")
-
-    iq_data = iq_data.transpose(2, 0, 1)  # Convert from (H,W,C) to (C,H,W)
-    iq_data = iq_data[:2, :, :].astype(np.float32)  # Convert to float32
-    iq_data = iq_data / np.max(np.abs(iq_data))
-    print(f"Normalized data shape: {iq_data.shape}")
-
+def test_AE_no_plot(iq_data, ae, device):
+    plt.ioff()  # Turn off interactive mode to prevent plots from showing
+    
     # Convert to tensor and add batch dimension
     test_tensor = torch.tensor(iq_data, dtype=torch.float32).unsqueeze(0)  # Add batch dimension
-    print(f"Tensor shape: {test_tensor.shape}")
+    # print(f"Tensor shape: {test_tensor.shape}")
 
     # Move to device
     test_tensor = test_tensor.to(device)
 
     # Encode the test sample
     with torch.no_grad():
-        recon, _ = ae(test_tensor)  # Get all outputs from AE
+        recon = ae(test_tensor)  # Get all outputs from AE
         # z = ae.reparameterize(mu, logvar)
         # recon = ae(test_tensor)
 
     # Calculate reconstruction error
     import torch.nn.functional as F
     mse_loss = F.mse_loss(recon, test_tensor)
-    print(f"Reconstruction MSE: {mse_loss.item():.6f}")
+    print(f"Reconstruction MSE: {np.sqrt(mse_loss.item()):.6f}")
+    loss = torch.nn.functional.mse_loss(recon, test_tensor, reduction='sum')
+    print("loss: ", loss)
 
     print(f"Original shape: {test_tensor.shape}")
     print(f"Reconstructed shape: {recon.shape}")
@@ -526,4 +520,46 @@ def test_AE(path, ae, device):
 
     plot_iq_recon(plt, original_data, recon_data, anomaly_map, mse_loss.item(), np.percentile(anomaly_map, 95))
     
+    # plt.show()
+    return plt
+
+def test_AE(path, ae, device):
+    test_data = scipy.io.loadmat(path)
+    # Extract the IQ data
+    iq_data = test_data['noiseInterferenceGrid_IQ']  # Assuming the key is 'data', adjust if different
+    # print(f"Test data shape: {iq_data.shape}")
+
+    iq_data = iq_data.transpose(2, 0, 1)  # Convert from (H,W,C) to (C,H,W)
+    iq_data = iq_data[:2, :, :].astype(np.float32)  # Convert to float32
+    # iq_data = (iq_data - np.min(iq_data)) / (np.max(iq_data) - np.min(iq_data))
+    # iq_data = iq_data / np.max(np.abs(iq_data))
+    # iq_data = iq_data / IQ_NORMALIZATION_FACTOR
+    # iq_data = np.clip(iq_data, -1, 1)
+    # print(f"Normalized data shape: {iq_data.shape}")
+
+    plt = test_AE_no_plot(iq_data, ae, device)
     plt.show()
+
+def gen_report_db(datasets, ae, device, file_path, num_samples=-1):
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Image
+    from io import BytesIO
+
+    pdf = SimpleDocTemplate(file_path, pagesize=letter)
+    elements = []
+
+    print(f"datasets.shape: {datasets.shape}")
+    for index, iq_data in enumerate(datasets):
+        print(f"Processing {index}/{len(datasets)}")
+        plt = test_AE_no_plot(iq_data, ae, device)
+        bio = BytesIO()
+        plt.savefig(bio, format='png', bbox_inches='tight')
+        bio.seek(0)
+        plot_image = Image(bio, width=300, height=300)
+        elements.append(plot_image)
+        if num_samples >= 0 and index > num_samples:
+            break
+
+    print("Building PDF")
+    pdf.build(elements)
+    print("PDF built at: ", file_path)
